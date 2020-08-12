@@ -1,0 +1,356 @@
+---
+title: 'Causal generalization in extinction learning: network analysis'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#knitr options
+knitr::opts_chunk$set(echo=TRUE, error=TRUE, warning=FALSE, message=FALSE, fig.align="center")
+
+#load packagesc nm
+packages <- c("dplyr", "summarytools", 
+              "huge", "qgraph", "bootnet")
+if (length(setdiff(packages, rownames(installed.packages()))) > 0) {
+  install.packages(setdiff(packages, rownames(installed.packages())))
+}
+lapply(packages, require, character.only=TRUE)
+
+```
+
+```{r qgraph_setup, include=FALSE}
+# setup colorbrewer2.0 palette:
+# https://colorbrewer2.org/?type=qualitative&scheme=Set2&n=6
+colours_all.set2=c('#66c2a5','#8da0cb','#e78ac3','#fc8d62','#a6d854','#ffd92f')
+
+#max edge weight for constancy of visualisation across networks:
+max_edge=0.4
+```
+
+```{r load_data, echo=FALSE}
+#load data
+preTx<-read.csv("../results/pre-tx_master.csv")
+```
+
+***
+
+## 1. Psychological symptom data only 
+
+First, lets's select the data we want to include in the network model (for now, only self-reported psychological symptom data).  
+
+```{r echo=FALSE, include=FALSE}
+#select desired variables to model:
+data<-dplyr::select(preTx, 
+                    bl_PCL5_reExp, bl_PCL5_avoid, bl_PCL5_negAff, bl_PCL5_anhed, bl_PCL5_extBeh, 
+                    bl_PCL5_anxArou, bl_PCL5_dysArou,
+                    bl_BDI_II_cog, bl_BDI_II_physAff
+                    )
+#view distribution of variables
+print(dfSummary(data, max.distinct.values=5, graph.magnif = 0.75), method = 'render')
+
+#probably want to transform the symptom data before network analysis as GGMs assume roughly gaussian distributions: we can do this directly using qgraph npn option
+```
+
+Now, let's construct ta Gaussian Graphical Model (GGM) from the data:  
+
+```{r echo=FALSE}
+#estimate the network via a Gaussian Graphical Model:
+#as above, we will choose a unthresholded network with Pearson correlations
+n1<-estimateNetwork(data, 
+                    default="EBICglasso",
+                    corArgs = list(method = "pearson"), #default as of bootnet1.4
+                    corMethod="npn",
+                    threshold = FALSE
+                    )
+
+#make a pretty version of the GGM network plot:
+names<-c('PCL1', 'PCL2', 'PCL3', 'PCL4', 'PCL5', 'PCL6', 'PCL7', 
+         'BDI1', 'BDI2'
+         )
+longnames<-c('re-experiencing', 'avoidance', 'negative affect', 'anhedonia', 
+             'externalizing behaviour', 'anxious arousal', 'dysphoric arousal',
+             'cognitive symptoms', 'physical/affective symptoms'
+             )
+gr<-list('PTSD symptoms'=c(1:7),
+         'Depression symptoms'=c(8:9)
+         )
+
+p1<-plot(n1, layout="spring",
+         labels=names, groups=gr, nodeNames=longnames,
+         maximum=max_edge,
+         vsize=6, cut=0, border.width=1.5, border.color='black', 
+         colors=colours_all.set2, #palette="pastel",
+         legend.cex=.4, GLratio=2.5, mar=c(2,2,2,2),
+         title="")
+
+sum1<-sum(abs(n1$graph[upper.tri(n1$graph, diag=FALSE)])); sum1     #4.10;
+```
+
+And investigate stability of the network:
+```{r echo=FALSE}
+#bootstrap edges
+b1n1<-bootnet(n1, nCores=8, nBoots=2000, statistics = c("edge", "strength"))
+#save output *immediately* for big datasets as the above step is intensive
+save(b1n1, file = "b1n1.Rdata")
+
+#multiverse plot
+multiverse(b1n1)
+
+#plot edge weights CI
+plot(b1n1, labels = FALSE, order = "sample")
+
+```
+
+***
+
+## 2. Psychological symptoms and extinction task data
+
+```{r echo=FALSE, include=FALSE}
+#select desired variables to model:
+data<-dplyr::select(preTx, 
+                    bl_PCL5_reExp, bl_PCL5_avoid, bl_PCL5_negAff, bl_PCL5_anhed, bl_PCL5_extBeh, 
+                    bl_PCL5_anxArou, bl_PCL5_dysArou,
+                    bl_BDI_II_cog, bl_BDI_II_physAff,
+                    logBF, CSplus_b9, CSminus_b9
+                    )
+
+#view distribution of variables
+print(dfSummary(data, max.distinct.values=5, graph.magnif = 0.75), method = 'render')
+# #probably want to transform the symptom data before network analysis as GGMs assume roughly gaussian distributions
+```
+
+Now, let's see what happens when we include extinction task performance variables in the psychological symptom network:  
+```{r echo=FALSE}
+#as above, we will choose a thresholded network with pearson correlations (the default)
+n2<-estimateNetwork(data, 
+                    default="EBICglasso",
+                    corArgs = list(method = "pearson"),
+                    corMethod = "npn",
+                    threshold = FALSE
+                    )
+n2.summ<-n2$graph
+
+#make a pretty version of the GGM network plot:
+names<-c('PCL1', 'PCL2', 'PCL3', 'PCL4', 'PCL5', 'PCL6', 'PCL7', 
+         'BDI1', 'BDI2', 
+         'logBF', 'ext', 'safe'
+         )
+longnames<-c('re-experiencing', 'avoidance', 'negative affect', 'anhedonia', 
+             'externalizing behaviour', 'anxious arousal', 'dysphoric arousal',
+             'cognitive symptoms', 'physical/affective symptoms',
+             'logBF(alpha>0)', 'extinction resistance', 'safety learning failure'
+             )
+gr<-list('PTSD symptoms'=c(1:7),
+         'Depression symptoms'=c(8:9),
+         'Extinction task'=c(10:12)
+         )
+p2<-plot(n2, layout="spring",
+         labels=names, groups=gr, nodeNames=longnames,
+         maximum=max_edge,
+         vsize=6, cut=0, border.width=1.5, border.color='black', 
+         colors=colours_all.set2, #palette="pastel",
+         legend.cex=.4, GLratio=2.5, mar=c(2,2,2,2),
+         title="")
+
+#get sum of network edges:
+sum2<-sum(abs(n2$graph[upper.tri(n2$graph, diag=FALSE)])); sum2    # 5.02;
+```
+
+And investigate network stability:
+
+```{r echo=FALSE}
+#bootstrap
+b1n2<-bootnet(n2, nCores=8, nBoots=2000, statistics = c("edge", "strength"))
+#save output *immediately*
+save(b1n2, file = "b1n2.Rdata")
+
+#multiverse plot 
+multiverse(b1n2)
+
+#plot edge weights CI
+plot(b1n2, labels=FALSE, order="sample")
+t2<-summary(b1n2) #to generate tibble with output stats; see ?summary.bootnet for details
+```
+
+And power:
+
+```{r echo=FALSE}
+#simulate 1000 repititions in 8 cores under different sampling levels:
+n2.sim<-netSimulator(n2,
+                     default = "EBICglasso",
+                     nCases = c(56,100,150, 250,500),
+                     nReps = 1000,
+                     nCores = 8)
+
+#table of results:
+n2.sim.res<-n2.sim %>%
+            dplyr::group_by(nCases) %>%
+            dplyr::summarise(med_corr = median(correlation), iqr_corr = IQR(correlation),
+                             med_sens = median(sensitivity), iqr_sens = IQR(sensitivity), 
+                             med_spec = median(specificity), iqr_spec = IQR(specificity))
+print.data.frame(n2.sim.res)
+
+#plot results:
+plot(n2.sim)
+```
+
+***
+
+## 3. Psychological symptoms and extinction task data, with demographic data  
+
+```{r echo=FALSE, include=FALSE}
+#select desired variables to model:
+data<-dplyr::select(preTx, 
+                    bl_PCL5_reExp, bl_PCL5_avoid, bl_PCL5_negAff, bl_PCL5_anhed, bl_PCL5_extBeh, 
+                    bl_PCL5_anxArou, bl_PCL5_dysArou,
+                    bl_BDI_II_cog, bl_BDI_II_physAff,
+                    logBF, CSplus_b9, CSminus_b9,
+                    pt_age, education,
+                    bl_MOS_SS_total, 
+                    trauma_total
+                    )
+
+#view distribution of variables
+print(dfSummary(data, max.distinct.values=5, graph.magnif = 0.75), method = 'render')
+# #probably want to transform the symptom data before network analysis as GGMs assume roughly gaussian distributions
+```
+
+Now, let's see what happens when we throw everything in:  
+
+```{r echo=FALSE}
+#estimate the network via a Gaussian Graphical Model:
+#as above, we will choose a unthresholded network with pearson correlations (the default)
+n3<-estimateNetwork(data, 
+                    default="EBICglasso",
+                    corArgs = list(method = "pearson"),
+                    corMethod = "npn",
+                    threshold = FALSE
+                    )
+n3.summ<-n3$graph
+
+#make a pretty version of the GGM network plot:
+names<-c('PCL1', 'PCL2', 'PCL3', 'PCL4', 'PCL5', 'PCL6', 'PCL7', 
+         'BDI1', 'BDI2',
+         'logBF', 'ext', 'safe',
+         'age', 'edu', 
+         'soc',
+         'TH'
+         )
+longnames<-c('re-experiencing', 'avoidance', 'negative affect', 'anhedonia', 
+             'externalizing behaviour', 'anxious arousal', 'dysphoric arousal',
+             'cognitive symptoms', 'physical/affective symptoms',
+             'logBF(alpha>0)', 'extinction resistance', 'safety learning failure',
+             'age', 'education level', 
+             'perceived social support',
+             'additional (nonWTC) trauma'
+             )
+gr<-list('PTSD symptoms'=c(1:7),
+         'Depression symptoms'=c(8:9),
+         'Extinction task'=c(10:12),
+         'Clinical covariates'=c(13:16)
+          )
+p3<-plot(n3, layout="spring",
+         labels=names, groups=gr, nodeNames=longnames,
+         maximum=max_edge,
+         vsize=6, cut=0, border.width=1.5, border.color='black', 
+         colors=colours_all.set2, #palette="pastel",
+         legend.cex=.4, GLratio=2.5, mar=c(2,2,2,2),
+         title="")
+```
+
+And investigate network stability:
+
+```{r echo=FALSE}
+#bootstrap routines, non-parametric bootstrap when handling ordinal data
+b1n3<-bootnet(n3, nCores=8, nBoots=2000, statistics = c("edge", "strength"))
+#save output *immediately* for big datasets as the above step is intensive
+save(b1n3, file = "b1n3.Rdata")
+
+#multiverse plot of edge weight stability
+multiverse(b1n3)
+
+#plot edge weights CI
+plot(b1n3, labels=FALSE, order="sample")
+t3<-summary(b1n3) #to generate tibble with output stats; see ?summary.bootnet for details
+```
+
+Investigate change from network 2 (symptom + task data) to network 3 (symptom + task data + covariates), following approach from Armour et al. (2017):
+
+```{r echo=FALSE}
+#delete extinction task variables from network of symptom and extinction task variables (cols 10:12)
+n3graph.symptoms<-n3$graph[-c(10:16),-c(10:16)] 
+
+#calculate difference between symptoms network in n1 and that in n2
+n1n3.delta<-n1$graph - n3graph.symptoms
+max(n1n3.delta) #0.10 for BDIcog<->BDIphys
+mean(abs(n1n3.delta[upper.tri(n1n3.delta, diag=FALSE)])) #0.061; #delta re-exp:avoid=0.019
+
+#plot difference graph
+names<-c('PCL1', 'PCL2', 'PCL3', 'PCL4', 'PCL5', 'PCL6', 'PCL7', 
+         'BDI1', 'BDI2')
+longnames<-c('re-experiencing', 'avoidance', 'negative affect', 'anhedonia', 
+             'externalizing behaviour', 'anxious arousal', 'dysphoric arousal',
+             'cognitive symptoms', 'physical/affective symptoms')
+gr<-list('PTSD symptoms'=c(1:7),
+         'Depression symptoms'=c(8:9))
+qgraph(n1n3.delta, layout=p1$layout,
+       labels=names, groups=gr, nodeNames=longnames,
+       maximum=max_edge,
+       vsize=6, cut=0, border.width=1.5, border.color='black', 
+       theme="colorblind", colors=colours_all.set2,
+       legend.cex=.4, GLratio=2.5, mar=c(2,2,2,2),
+       title="")
+
+#correlation between symptoms network in n1 and that in n2
+cor(as.vector(n1$graph), as.vector(n3graph.symptoms), method="pearson") #0.987
+
+#mean edge weight among symptoms=0.11; adding ext task measures reduces sum of edges among symptoms by 11.2%
+sum1<-sum(abs(n1$graph[upper.tri(n1$graph, diag=FALSE)])); sum1                      #4.10; sum/2 of ptsd network matrix
+mean1<-mean(abs(n1$graph[upper.tri(n1$graph,diag=FALSE)])); mean1                    #0.11; mean edge strength
+sum2<-sum(abs(n3graph.symptoms[upper.tri(n3graph.symptoms, diag=FALSE)])); sum2      #3.64; sum/2 of ptsd + extinction task matrix, with covariate cells deleted (ptsd network accounting for ext task but without them)
+mean2<-mean(abs(n3graph.symptoms[upper.tri(n3graph.symptoms, diag=FALSE)])); mean2   #0.10; mean edge strength
+((sum2-sum1)/sum1)*100 #change in connectivity of PTSD network once ext task metrics are added: -11.2%
+
+```
+
+Investigate power:
+
+```{r echo=FALSE}
+#simulate 1000 repititions in 8 cores under different sampling levels:
+n3.sim<-netSimulator(n3,
+                     default = "EBICglasso",
+                     nCases = c(56,100,150,250,500),
+                     nReps = 1000,
+                     nCores = 8)
+
+#table of results:
+n3.sim.res<-n3.sim %>%
+            dplyr::group_by(nCases) %>%
+            dplyr::summarise(med_corr = median(correlation), iqr_corr = IQR(correlation),
+                             med_sens = median(sensitivity), iqr_sens = IQR(sensitivity), 
+                             med_spec = median(specificity), iqr_spec = IQR(specificity))
+print.data.frame(n3.sim.res)
+
+#plot results:
+plot(n3.sim)
+```
+
+Save R package info for reproducibility:
+
+```{r echo=FALSE}
+writeLines(capture.output(sessionInfo()), "RsessionInfo.txt")
+```
+
+# References:  
+
+Tutorial on network estimation: Epskamp, S., & Fried, E. I. (2018). A tutorial on regularized partial correlation networks. Psychological Methods, 23(4), 617–634. https://doi.org/10.1037/met0000167 
+(see also: Network analysis workshop (FLAMES, Ghent, 2019), by Eiko Fried and Julian Burger https://osf.io/p527f/)
+
+Power analysis using bootnet function netSimulator: Faelens, L., Hoorelbeke, K., Fried, E., De Raedt, R., & Koster, E. H. W. (2019). Negative influences of Facebook use through the lens of network analysis. Computers in Human Behavior, 96, 13–22. https://doi.org/10.1016/j.chb.2019.02.002
+
+Network differences with/without covariates: Armour, C., Fried, E. I., Deserno, M. K., Tsai, J., & Pietrzak, R. H. (2017). A network analysis of DSM-5 posttraumatic stress disorder symptoms and correlates in U.S. military veterans. Journal of Anxiety Disorders, 45, 49–59. https://doi.org/10.1016/j.janxdis.2016.11.008
+
+qgraph: Epskamp, S., Cramer, A. O. J., Waldorp, L. J., Schmittmann, V. D., & Borsboom, D. (2012). qgraph: Network Visualizations of Relationships in Psychometric Data. Journal of Statistical Software, 048(i04). https://econpapers.repec.org/article/jssjstsof/v_3a048_3ai04.htm
+
+bootnet: Epskamp, S., & Fried, E. I. (2018). A tutorial on regularized partial correlation networks. Psychological Methods, 23(4), 617–634. https://doi.org/10.1037/met0000167
+
+
