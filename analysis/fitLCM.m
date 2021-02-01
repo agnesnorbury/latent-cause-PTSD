@@ -10,7 +10,7 @@ clear; close all;
 homedir='/Users/agnesnorbury/Desktop/causal_gen/iCBT_gen/code_share';
 %where to find raw data:
 datadir=[homedir '/data'];
-%where to find LCM toolbox:
+%where to find LCM codebase (see github link in header for source):
 LCM_path=[homedir '/analysis/LCM']; addpath(LCM_path)
 %where to save LCM results:
 resdir=[homedir '/results']; if ~exist(resdir); mkdir(resdir); end
@@ -24,7 +24,8 @@ n_t_exclRecall=60;      %conditioning and extinction trials only
 n_t_block=10;           %number of trials per block
 n_c=2;                  %number of CSs
 
-%-prepare data for LCM fitting
+%-prepare data for LCM fitting 
+% [not needed here, dead code provided for reference on data generation]
 %==========================================================================
 % USAGE: results = LCM_fit(data,[opts])
 %
@@ -59,7 +60,7 @@ n_c=2;                  %number of CSs
 %         for i=1:length(tmp), if tmp(i,5)==2, tmp(i,7)=1; else, tmp(i,7)=0; end; end
 %         
 %         %NB we will fit LCM model only to initial conditioning and *first
-%         %two* extinction blocks, so model is unbiased by these:
+%         %two* extinction blocks, so model is unbiased by later trials:
 %         LCMdata=tmp(1:(n_t_exclRecall-n_t_block),:);
 %         data(s).subID=sub_ID{1,1};
 %         data(s).randgroup=LCMdata(1,1);
@@ -75,25 +76,30 @@ n_c=2;                  %number of CSs
 %             end
 %         end
 %         data(s).CR=zscore(LCMdata(:,3)); %z score ratings within-ppt
-%         data(s).US=LCMdata(:,7);
+%         data(s).US=LCMdata(:,7);         %0=no loss; 1=loss
+%         data(s).RT=LCMdata(:,2);         %trial RT in ms
 %         
-%         %while we're here let's also extract some behavioural summary data
-%         %for sanity checking/visualisation: 
-%         b_i=1;
-%         for b=1:length(tmp)/n_t_block
-%             tmp2=tmp(b_i:b_i+n_t_block-1,:);
-%             CSplus_rating_byBlock(s,b)=mean(tmp2(tmp2(:,6)==1,3));
-%             CSplus_RT_byBlock(s,b)=median(tmp2(tmp2(:,6)==1,2));    %median for RTs to avoid outlier bias as some ppts/trials are v long...
-%             CSminus_rating_byBlock(s,b)=mean(tmp2(tmp2(:,6)==2,3));
-%             CSminus_RT_byBlock(s,b)=median(tmp2(tmp2(:,6)==2,2));   
-%             b_i=b_i+n_t_block;
-%         end
+%         %while we're here let's also create long format data for other analysis (e.g. in R)
+%         data_long_s(1:length(LCMdata),1)=s;
+%         data_long_s(:,2)=1:1:length(LCMdata);
+%         data_long_s(:,3)=LCMdata(:,6);
+%         data_long_s(:,4)=LCMdata(:,3);
+%         data_long_s(:,5)=zscore(LCMdata(:,3));
+%         data_long_s(:,6)=LCMdata(:,7);
+%         data_long_s(:,7)=LCMdata(:,2);
+%         data_long = vertcat(data_long, data_long_s);
 %     
 %     end
-%     
-%     behav_summ=[CSplusCE, CSminusCE, CSplusR, CSminusR];
-%     
+%
+%     %save .mat data
 %     save([resdir '/' sessions{sess} '_raw_dataZ'],'data')
+%     
+%     %save .csv (long format) data
+%     headers = {'subID','trial','CS','CR','CRz','US','RT'}; headers = strjoin(headers, ',');
+%     fid = fopen([resdir '/' sessions{sess} '_raw_data_long.csv'], 'w'); 
+%     fprintf(fid,'%s\n', headers);
+%     fclose(fid);
+%     dlmwrite([resdir '/' sessions{sess} '_raw_data_long.csv'], data_long, '-append');
 %     
 % end
  
@@ -129,12 +135,12 @@ for sess=1:numel(sessions)
    
     %fit LCM to data
     opts.a=1; opts.b=1; 
-    %opts.M=1;       %for MAP (quick first pass)
+    %opts.M=1;       %for MAP (can run this instead of particle filter for quick first pass)
     opts.M = 500;    %for higher accuracy particle filtering model estimation
     [results] = LCM_fit(data,opts);
     
     %save results
-    %save([resdir '/' sessions{sess} '_LCM_results_MAP'],'results')      %for MAP
+    %save([resdir '/' sessions{sess} '_LCM_results_MAP'],'results') %for quick MAP approximation
     save([resdir '/' sessions{sess} '_LCM_results_PF'],'results')   %for higher fidelity particle filtering
       
 end
@@ -152,6 +158,7 @@ end
 %            latent causes) is determined adaptively by the model.
 opts.K=10; %maximum number of latent causes (default)
 nAlpha=50; %number of alpha values evaluated (default)
+res_long=[];
 
 for sess=1:numel(sessions)    
     
@@ -168,14 +175,23 @@ for sess=1:numel(sessions)
         histogram(data(s).CR,10)
 
         %extract some stuff from inside 
-        LCs=zeros(numel(results(s).latents),opts.K);    %preallocate size for LCs as not all matrices same size) (K=10 is LCM default)
+        LCs=zeros(numel(results(s).latents), opts.K);    %preallocate size for LCs as not all matrices same size) (K=10 is LCM default)
+        LCs_t=zeros(length(data(s).CR), opts.K);         %preallocate size
         for p=1:numel(results(s).latents)
-            pred(p,:)=results(s).latents(p).CR;         %extract series of predicted CRs for each alpha value
+            Vs(p,:)=results(s).latents(p).V;             %extract series of stimulus (US prediction) values for each alpha value
+            pred(p,:)=results(s).latents(p).CR;          %extract series of predicted CRs for each alpha value
+            betas(p,:)=results(s).latents(p).b;          %extract beta parameter value for each alpha value
+            %for overall latent cause estimates (average across trials, per alpha value
             LCs(p,1:length(mean(results(s).latents(p).post)))=mean(results(s).latents(p).post);    %extract posterior over latent causes for each alpha value
+            %for probability-weighted latent cause estimates by trial
+            LCs_t_p=zeros(length(data(s).CR), opts.K);
+            LCs_t_p(:,1:length(mean(results(s).latents(p).post)))=results(s).latents(p).post.*results(s).P(p); %extract posterior over latent causes *per trial* multiplied by posterior prob of that alpha value
+            LCs_t=(LCs_t+LCs_t_p);  %then just sum over all probability-weighted state estimates
         end
         
         %look at actual vs predicted CR (rating) on each trial:
-        predCR=sum(pred.*results(s).P);  %multiply by posterior P over alpha values
+        predCR=mean(pred.*results(s).P)*nAlpha;   %multiply by posterior P over alpha values and sum
+        predV=mean(Vs.*results(s).P)*nAlpha; 
         figure(p2);
         subplot(ceil(sqrt(numel(data))),ceil(sqrt(numel(data))),s)
         scatter(data(s).CR,predCR)
@@ -184,7 +200,7 @@ for sess=1:numel(sessions)
         Rs(s,1)=r(2);
         
         %extract posterior distribution over latent causes for this sub:
-        LCpost_all(s,:)=sum(LCs.*results(s).P);
+        LCpost_all(s,:)=mean(LCs.*results(s).P)*nAlpha;  %multiply by posterior P over alpha values and sum
         
         %look at posterior distributions over alpha values:
         figure(p3);
@@ -192,8 +208,26 @@ for sess=1:numel(sessions)
         plot(linspace(0,10,nAlpha), results(s).P)
         title(['a=' num2str(round(results(s).alpha,1)) '; lBF=' num2str(round(results(s).logBF,1))])
         ylim([0 0.15])
-
+        
+        %put results in long format for further analysis
+        res_long_s(1:length(data(s).CR),1)=results(s).logBF;
+        res_long_s(1:length(data(s).CR),2)=results(s).alpha;
+        res_long_s(1:length(data(s).CR),3)=sum(betas.*results(s).P);
+        res_long_s(:,4:opts.K+3)=LCs_t;
+        res_long_s(:,opts.K+4)=predV';
+        res_long_s(:,opts.K+5)=predCR';
+        res_long = vertcat(res_long, res_long_s);
     end
+    
+    %save long format data+results
+    data_res_long=horzcat(data_long, res_long);
+    headers = {'subID','trial','CS','CR','CRz','US','RT',...
+                'logBF','alpha','beta','LC1','LC2','LC3','LC4','LC5','LC6','LC7','LC8','LC9','LC10','predV','predCR'}; 
+    headers = strjoin(headers, ',');
+    fid = fopen([resdir '/' sessions{sess} '_data_results_long.csv'], 'w'); 
+    fprintf(fid,'%s\n', headers);
+    fclose(fid);
+    dlmwrite([resdir '/' sessions{sess} '_data_results_long.csv'], data_res_long, '-append');
 
 end
 
@@ -204,7 +238,7 @@ bar(1:1:opts.K,mean(LCpost_all))
 
 %-random permutation of ratings data / model fit:
 %=========================================================================
-nperm=1000;
+nperm=1000;     %number of permuated datasets to generate
 
 for sess=1:numel(sessions)
     
@@ -217,8 +251,7 @@ for sess=1:numel(sessions)
     end
     %reshape to single vector
     ratings_raw=reshape(ratings_raw,1,numel(data)*(n_t_exclRecall-n_t_block));
-    %randomly permute ratings and store against real trial structure as
-    %randomly-resampled 'subjects'
+    %randomly permute ratings and store against real trial structure as randomly-resampled 'subjects'
     for p=1:nperm
         i=randperm(length(ratings_raw),50);
         data_perm(p).CR=zscore(ratings_raw(:,i))';
