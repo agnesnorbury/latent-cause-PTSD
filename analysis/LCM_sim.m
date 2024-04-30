@@ -30,7 +30,7 @@ function [latents] = LCM_sim(alpha,beta,data,opts)
     N = length(results.V);
     X = results.V;
     b=beta;
-    noise=normrnd(0,1);                      % as per Gershman and Hartley (2015)
+    noise=normrnd(0,1,[N,1]);                           % as per Gershman and Hartley (2015)
     CRpred = X*b + noise;                    % predicted CR (with injected noise)
     
     % return latent variables
